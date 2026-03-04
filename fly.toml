@@ -6,7 +6,7 @@ primary_region = "hkg"
   PORT = "3000"
 
 [build]
-  builder = "paketobuildpacks"
+  dockerfile = "Dockerfile"
 
 [http_service]
   internal_port = 3000
