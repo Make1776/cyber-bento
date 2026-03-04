@@ -1,70 +1,75 @@
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
+const fs = require('fs');
 const path = require('path');
 
-// 数据库文件路径
 const DB_PATH = path.join(__dirname, 'orders.db');
 
 class OrderDatabase {
   constructor() {
     this.db = null;
+    this.SQL = null;
     this.initialized = false;
   }
 
-  // 初始化数据库
-  init() {
+  async init() {
     try {
-      this.db = new Database(DB_PATH);
-      console.log('✅ 数据库连接成功');
+      this.SQL = await initSqlJs();
+      
+      // try to load existing database
+      let fileBuffer = null;
+      if (fs.existsSync(DB_PATH)) {
+        fileBuffer = fs.readFileSync(DB_PATH);
+      }
+
+      if (fileBuffer) {
+        this.db = new this.SQL.Database(fileBuffer);
+        console.log('✅ 数据库连接成功（加载现有数据）');
+      } else {
+        this.db = new this.SQL.Database();
+        console.log('✅ 数据库连接成功（新建）');
+      }
+
       this.createTableIfNotExists();
+      this.saveToFile();
       this.initialized = true;
       return Promise.resolve();
     } catch (err) {
-      console.error('❌ 数据库连接失败:', err);
+      console.error('❌ 数据库初始化失败:', err);
       return Promise.reject(err);
     }
   }
 
-  // 创建所有表（如果不存在）
   createTableIfNotExists() {
     try {
-      // 创建菜单表
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS menu_items (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          price REAL NOT NULL,
-          stock INTEGER NOT NULL DEFAULT 999,
-          is_available INTEGER DEFAULT 1,
-          description TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      this.db.run(`CREATE TABLE IF NOT EXISTS menu_items (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        stock INTEGER NOT NULL DEFAULT 999,
+        is_available INTEGER DEFAULT 1,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
       console.log('✅ 菜单表已准备');
 
-      // 创建订单表
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS orders (
-          id TEXT PRIMARY KEY,
-          user_line_id TEXT NOT NULL,
-          user_message TEXT NOT NULL,
-          items TEXT,
-          total_price REAL,
-          status TEXT DEFAULT 'pending',
-          payment_status TEXT DEFAULT 'unpaid',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      this.db.run(`CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        user_line_id TEXT NOT NULL,
+        user_message TEXT NOT NULL,
+        items TEXT,
+        total_price REAL,
+        status TEXT DEFAULT 'pending',
+        payment_status TEXT DEFAULT 'unpaid',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
       console.log('✅ 订单表已准备');
 
-      // 创建配置表
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      this.db.run(`CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
       console.log('✅ 配置表已准备');
 
       this.initializeDefaultSettings();
@@ -74,22 +79,20 @@ class OrderDatabase {
     }
   }
 
-  // 初始化默认设置
   initializeDefaultSettings() {
     const defaults = [
-      { key: 'business_hours_start', value: '09:00' },
-      { key: 'business_hours_end', value: '21:00' },
-      { key: 'shop_name', value: '江东区赛博便当店' },
-      { key: 'is_open', value: '1' }
+      ['business_hours_start', '09:00'],
+      ['business_hours_end', '21:00'],
+      ['shop_name', '江东区赛博便当店'],
+      ['is_open', '1']
     ];
 
-    const stmt = this.db.prepare(
-      `INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`
-    );
-
-    for (const setting of defaults) {
+    for (const [key, value] of defaults) {
       try {
-        stmt.run(setting.key, setting.value);
+        this.db.run(
+          `INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
+          [key, value]
+        );
       } catch (err) {
         // 已存在，忽略
       }
@@ -97,14 +100,23 @@ class OrderDatabase {
     console.log('✅ 默认配置已初始化');
   }
 
-  // 保存订单
+  saveToFile() {
+    try {
+      const data = this.db.export();
+      const buffer = Buffer.from(data);
+      fs.writeFileSync(DB_PATH, buffer);
+    } catch (err) {
+      console.error('⚠️ 数据库保存失败:', err);
+    }
+  }
+
   saveOrder(userId, userMessage, items, totalPrice, orderId) {
     try {
-      const stmt = this.db.prepare(
-        `INSERT INTO orders (id, user_line_id, user_message, items, total_price, status) 
-         VALUES (?, ?, ?, ?, ?, 'pending')`
+      this.db.run(
+        `INSERT INTO orders (id, user_line_id, user_message, items, total_price, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [orderId, userId, userMessage, items ? JSON.stringify(items) : null, totalPrice]
       );
-      stmt.run(orderId, userId, userMessage, items ? JSON.stringify(items) : null, totalPrice);
+      this.saveToFile();
       console.log(`✅ 订单已保存: ${orderId}`);
       return Promise.resolve(orderId);
     } catch (err) {
@@ -113,52 +125,47 @@ class OrderDatabase {
     }
   }
 
-  // 查询所有订单
-  getAllOrders() {
-    try {
-      const stmt = this.db.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 100');
-      const rows = stmt.all();
-      return Promise.resolve(rows || []);
-    } catch (err) {
-      return Promise.reject(err);
-    }
-  }
-
-  // 查询今日订单
   getTodayOrders() {
     try {
-      const stmt = this.db.prepare(
-        `SELECT * FROM orders 
-         WHERE DATE(created_at) = DATE('now', 'localtime')
-         ORDER BY created_at DESC`
-      );
-      const rows = stmt.all();
-      return Promise.resolve(rows || []);
+      const result = this.db.exec(`
+        SELECT * FROM orders 
+        WHERE DATE(created_at) = DATE('now', 'localtime')
+        ORDER BY created_at DESC
+      `);
+      const rows = result.length > 0 ? result[0].values.map(row => {
+        const cols = result[0].columns;
+        let obj = {};
+        cols.forEach((col, idx) => obj[col] = row[idx]);
+        return obj;
+      }) : [];
+      return Promise.resolve(rows);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 获取订单统计
   getOrderStats() {
     try {
-      const stmt = this.db.prepare(
-        `SELECT 
+      const result = this.db.exec(`
+        SELECT 
           COUNT(*) as total_orders,
           SUM(CASE WHEN DATE(created_at) = DATE('now', 'localtime') THEN 1 ELSE 0 END) as today_orders
-         FROM orders`
-      );
-      const row = stmt.get();
-      return Promise.resolve(row || { total_orders: 0, today_orders: 0 });
+        FROM orders
+      `);
+      const row = result.length > 0 && result[0].values.length > 0 ? {
+        total_orders: result[0].values[0][0],
+        today_orders: result[0].values[0][1]
+      } : { total_orders: 0, today_orders: 0 };
+      return Promise.resolve(row);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 关闭数据库
   close() {
     try {
       if (this.db) {
+        this.saveToFile();
         this.db.close();
         console.log('✅ 数据库已关闭');
       }
@@ -168,108 +175,92 @@ class OrderDatabase {
     }
   }
 
-  // ========== 菜单管理方法 ==========
-
-  // 获取所有菜单项
+  // 菜单管理
   getMenuItems() {
     try {
-      const stmt = this.db.prepare(`SELECT * FROM menu_items WHERE is_available = 1 ORDER BY name`);
-      return Promise.resolve(stmt.all() || []);
+      const result = this.db.exec(
+        `SELECT * FROM menu_items WHERE is_available = 1 ORDER BY name`
+      );
+      const rows = result.length > 0 ? result[0].values.map(row => {
+        const cols = result[0].columns;
+        let obj = {};
+        cols.forEach((col, idx) => obj[col] = row[idx]);
+        return obj;
+      }) : [];
+      return Promise.resolve(rows);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 获取单个菜单项
-  getMenuItem(name) {
-    try {
-      const stmt = this.db.prepare(`SELECT * FROM menu_items WHERE name = ? AND is_available = 1`);
-      const row = stmt.get(name);
-      return Promise.resolve(row || null);
-    } catch (err) {
-      return Promise.reject(err);
-    }
-  }
-
-  // 添加菜单项
   addMenuItem(id, name, price, stock = 999, description = '') {
     try {
-      const stmt = this.db.prepare(
-        `INSERT INTO menu_items (id, name, price, stock, description) 
-         VALUES (?, ?, ?, ?, ?)`
+      this.db.run(
+        `INSERT INTO menu_items (id, name, price, stock, description) VALUES (?, ?, ?, ?, ?)`,
+        [id, name, price, stock, description]
       );
-      stmt.run(id, name, price, stock, description);
+      this.saveToFile();
       return Promise.resolve(id);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 更新菜单项库存
   updateMenuStock(name, stock) {
     try {
-      const stmt = this.db.prepare(`UPDATE menu_items SET stock = ? WHERE name = ?`);
-      stmt.run(stock, name);
+      this.db.run(
+        `UPDATE menu_items SET stock = ? WHERE name = ?`,
+        [stock, name]
+      );
+      this.saveToFile();
       return Promise.resolve();
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 减少库存（订单时）
-  decreaseStock(name, quantity) {
-    try {
-      const stmt = this.db.prepare(`UPDATE menu_items SET stock = stock - ? WHERE name = ?`);
-      stmt.run(quantity, name);
-      return Promise.resolve();
-    } catch (err) {
-      return Promise.reject(err);
-    }
-  }
-
-  // ========== 设置管理方法 ==========
-
-  // 获取设置值
+  // 设置管理
   getSetting(key) {
     try {
-      const stmt = this.db.prepare(`SELECT value FROM settings WHERE key = ?`);
-      const row = stmt.get(key);
-      return Promise.resolve(row?.value || null);
+      const result = this.db.exec(
+        `SELECT value FROM settings WHERE key = ?`,
+        [key]
+      );
+      const value = result.length > 0 && result[0].values.length > 0 ? result[0].values[0][0] : null;
+      return Promise.resolve(value);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 获取所有设置
   getAllSettings() {
     try {
-      const stmt = this.db.prepare(`SELECT key, value FROM settings`);
-      const rows = stmt.all();
+      const result = this.db.exec(`SELECT key, value FROM settings`);
       const settings = {};
-      rows?.forEach(row => {
-        settings[row.key] = row.value;
-      });
+      if (result.length > 0) {
+        result[0].values.forEach(row => {
+          settings[row[0]] = row[1];
+        });
+      }
       return Promise.resolve(settings);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 更新设置
   updateSetting(key, value) {
     try {
-      const stmt = this.db.prepare(
-        `INSERT OR REPLACE INTO settings (key, value, updated_at) 
-         VALUES (?, ?, CURRENT_TIMESTAMP)`
+      this.db.run(
+        `INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+        [key, value]
       );
-      stmt.run(key, value);
+      this.saveToFile();
       return Promise.resolve();
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  // 检查营业状态
   async isBusinessOpen() {
     const isOpen = await this.getSetting('is_open');
     if (isOpen === '0') return false;
