@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install dotenv axios)",
+      "Bash(echo \"老板，我有点感冒，给我来一份豚骨拉面，千万别放葱蒜，汤给我弄热点。然后再加个炸鸡块和一块冰的乌龙茶。多少钱？\" | node test_receipt.js)",
+      "Bash(npx localtunnel --port 3000)",
+      "Bash(brew install ngrok)",
+      "Bash(ngrok http 3000)",
+      "Bash(node -e \"const line = require\\('@line/bot-sdk'\\); console.log\\(Object.keys\\(line\\)\\);\" 2>&1)",
+      "Bash(node --version && node -e \"const e = require\\('express'\\); console.log\\('express', e.version || require\\('./node_modules/express/package.json'\\).version\\)\" 2>&1)",
+      "Bash(node -e \"\nconst express = require\\('express'\\);\nconst app = express\\(\\);\napp.post\\('/test', express.raw\\({ type: \\(\\) => true }\\), \\(req, res\\) => {\n  console.log\\('body type:', typeof req.body, 'isBuffer:', Buffer.isBuffer\\(req.body\\), 'length:', req.body?.length\\);\n  res.send\\('ok'\\);\n}\\);\nconst s = app.listen\\(4099, \\(\\) => {\n  const http = require\\('http'\\);\n  const req = http.request\\({ method:'POST', host:'localhost', port:4099, path:'/test', headers:{'Content-Type':'application/json'} }, \\(res\\) => {\n    res.on\\('end', \\(\\) => { s.close\\(\\); }\\);\n    res.resume\\(\\);\n  }\\);\n  req.write\\(JSON.stringify\\({events:[]}\\)\\);\n  req.end\\(\\);\n}\\);\n\" 2>&1)",
+      "Bash(ngrok config check 2>&1; ls /Users/dayu/Desktop/Bento_V1/line_server.js 2>&1)"
+    ]
+  }
+}
