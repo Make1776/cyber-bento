@@ -1,6 +1,6 @@
 # fly.toml app configuration file generated for cyber-bento
 app = "cyber-bento"
-primary_region = "hkg"
+primary_region = "sin"
 
 [env]
   PORT = "3000"
