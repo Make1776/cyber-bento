@@ -1,0 +1,52 @@
+{
+  "shop": {
+    "name": "江東区赛博便当店",
+    "timezone": "Asia/Tokyo",
+    "business_hours": {
+      "start": "09:00",
+      "end": "21:00"
+    }
+  },
+  "items": [
+    {
+      "id": "001",
+      "name": "生姜焼き弁当",
+      "name_cn": "生姜烧便当",
+      "price": 850,
+      "description": "豚肉を生姜ダレでソテー、ご飯付き",
+      "stock": 50
+    },
+    {
+      "id": "002",
+      "name": "豚カツ弁当",
+      "name_cn": "炸猪排便当",
+      "price": 950,
+      "description": "揚げたての豚カツ、タルタルソース、野菜",
+      "stock": 40
+    },
+    {
+      "id": "003",
+      "name": "卵焼き弁当",
+      "name_cn": "玉子烧便当",
+      "price": 750,
+      "description": "ふんわり卵焼き、ご飯、季節野菜",
+      "stock": 35
+    },
+    {
+      "id": "004",
+      "name": "牛肉弁当",
+      "name_cn": "牛肉便当",
+      "price": 1100,
+      "description": "新鮮な牛肉、季節野菜添え",
+      "stock": 30
+    },
+    {
+      "id": "005",
+      "name": "スペシャル2種弁当",
+      "name_cn": "双拼便当",
+      "price": 1200,
+      "description": "豚肉と牛肉の組み合わせ、ご飯付き",
+      "stock": 25
+    }
+  ]
+}

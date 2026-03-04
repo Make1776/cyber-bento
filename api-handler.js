@@ -1,58 +1,90 @@
+/**
+ * API 处理器 - OpenRouter API 调用
+ * 仅负责：提取菜品和数量，不生成价格
+ */
+
 const axios = require('axios');
-const db = require('./database');
+const menu = require('./menu.json');
 
 const DEFAULT_TIMEOUT = 15000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
 
 /**
- * 生成系统提示词 - 使用真实菜单
+ * 生成严格的日文System Prompt
+ * 仅负责：1) 验证菜品名称  2) 提取数量  3) 拒绝非点单话题
+ * 绝不生成价格！价格由后端计算
  */
-async function getSystemPrompt() {
-  const menu = await db.getMenuItems();
-  
-  let menuText = '【现有菜品】\n';
-  for (const item of menu) {
-    if (item.stock <= 0) {
-      menuText += `- ${item.name}: ${item.price}元【已售罄】\n`;
-    } else {
-      menuText += `- ${item.name}: ${item.price}元 (库存: ${item.stock})\n`;
-    }
-  }
+function getSystemPrompt() {
+  const menuItems = menu.items
+    .map(item => `- ${item.name} (${item.name_cn})`)
+    .join('\n');
 
-  return `你是江东区网上便当店的智能收银员。
+  return `あなたは江東区サイバー弁当店の丁寧なお受付スタッフです。
 
-${menuText}
+【取り扱い商品】
+${menuItems}
 
-重要规则：
-1. 只能推荐上述菜品，不能编造菜品
-2. 如果顾客点的菜不在菜单里，礼貌拒绝并推荐类似的菜品
-3. 如果某菜已售罄，告知顾客该菜已售罄，推荐替代品
-4. 生成的小票必须是纯ASCII字符，包含：店名、日期、菜品名、数量、单价、小计、税率、总价、订单号、感谢语
-5. 严禁Markdown格式，严禁编造菜品，严禁废话`;
+【厳格なルール】
+1. IMPORTANT: 顧客の入力から「菜品」と「数量」のみを抽出してください
+2. ご質問とは関係のない話題（天気、ニュース、雑談など）には、「申し訳ございませんが、ご注文のみのご対応となります」と返答してください
+3. メニューにない料理をリクエストされたら、「恐れ入りますが、当店ではお取り扱いがございません。代わりに◯◯をお勧めいたします」と返答してください
+4. 数量が不明な場合は、「数量をお教えいただけますでしょうか？」と聞いてください
+5. 以下のJSONフォーマットで返答するのみです：
+{
+  "status": "ok" | "not_found" | "invalid",
+  "items": [{"name": "◯◯弁当", "qty": 2}],
+  "message": "◯◯個のご注文ですね、かしこまりました"
+}
+
+重要：価格計算は一切しないでください。菜品と数量の抽出だけです。`;
 }
 
 /**
- * 调用OpenRouter API生成收据 - 包含菜单验证
+ * 菜品マッチング - 日本語名またはハイフン記号で菜品を検索
  */
-async function generateReceipt(userMessage) {
-  // 首先检查营业时间
-  const isOpen = await db.isBusinessOpen();
-  if (!isOpen) {
-    const startTime = await db.getSetting('business_hours_start');
-    const endTime = await db.getSetting('business_hours_end');
-    return `⚠️ 抱歉，本店不在营业时间内\n营业时间: ${startTime} - ${endTime}`;
+function matchMenuItem(userInput) {
+  const input = userInput.toLowerCase();
+  
+  // 完全一致
+  for (const item of menu.items) {
+    if (item.name.includes(userInput) || item.name_cn.includes(userInput)) {
+      return item;
+    }
   }
 
+  // キーワード一致
+  if (input.includes('豚') || input.includes('ぶた') || input.includes('生姜') || input.includes('しょうが')) {
+    return menu.items[0]; // 生姜焼き弁当
+  }
+  if (input.includes('カツ') || input.includes('かつ') || input.includes('揚') || input.includes('あげ')) {
+    return menu.items[1]; // 豚カツ弁当
+  }
+  if (input.includes('卵') || input.includes('たまご') || input.includes('玉子') || input.includes('たまご')) {
+    return menu.items[2]; // 卵焼き弁当
+  }
+  if (input.includes('牛')) {
+    return menu.items[3]; // 牛肉弁当
+  }
+  if (input.includes('スペシャル') || input.includes('2種') || input.includes('双拼')) {
+    return menu.items[4]; // スペシャル2種弁当
+  }
+
+  return null;
+}
+
+/**
+ * OpenRouter API を呼び出して菜品を抽出
+ */
+async function extractItemsFromMessage(userMessage) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(`🔄 第 ${attempt}/${MAX_RETRIES} 次调用 OpenRouter API...`);
+      console.log(`🔄 第 ${attempt}/${MAX_RETRIES} 次调用 OpenRouter API 来提取菜品...`);
 
-      // 获取包含菜单的系统提示词
-      const systemPrompt = await getSystemPrompt();
-
+      const systemPrompt = getSystemPrompt();
+      
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -67,8 +99,8 @@ async function generateReceipt(userMessage) {
               content: userMessage
             }
           ],
-          temperature: 0.7,
-          max_tokens: 500
+          temperature: 0.3, // 低温度以确保一致的提取
+          max_tokens: 300
         },
         {
           headers: {
@@ -80,14 +112,31 @@ async function generateReceipt(userMessage) {
         }
       );
 
-      const receipt = response.data.choices?.[0]?.message?.content;
+      const responseText = response.data.choices?.[0]?.message?.content;
 
-      if (!receipt) {
-        throw new Error('API响应为空');
+      if (!responseText) {
+        throw new Error('API 响应为空');
       }
 
-      console.log(`✅ API调用成功（第 ${attempt} 次）`);
-      return receipt;
+      console.log(`✅ API 调用成功（第 ${attempt} 次）`);
+      
+      // 尝试解析 JSON
+      try {
+        const parsed = JSON.parse(responseText);
+        return {
+          success: true,
+          status: parsed.status,
+          items: parsed.items || [],
+          message: parsed.message || '了解了'
+        };
+      } catch (parseErr) {
+        return {
+          success: false,
+          status: 'parse_error',
+          items: [],
+          message: '申し訳ございません。もう一度ご確認ください。'
+        };
+      }
 
     } catch (error) {
       lastError = error;
@@ -105,41 +154,57 @@ async function generateReceipt(userMessage) {
     }
   }
 
-  // 所有重试都失败
-  const fallbackReceipt = await generateFallbackReceipt(userMessage);
-  console.warn(`⚠️  API调用全部失败, 使用备用小票`);
-  return fallbackReceipt;
+  // 所有重试都失败 - 返回后备响应
+  console.warn('⚠️  API 调用全部失败，将使用本地菜品匹配');
+  return {
+    success: false,
+    status: 'api_error',
+    items: [],
+    message: '申し訳ございません。ご注文をもう一度お願いいただけますか？',
+    fallback: true
+  };
 }
 
 /**
- * 生成备用小票（当API失败时）
+ * 利用本地菜品匹配作为备用方案（API 失败时）
  */
-async function generateFallbackReceipt(userMessage) {
-  const now = new Date();
-  const timeStr = now.toLocaleString('zh-CN');
-  const orderId = `FB${Date.now().toString().slice(-8)}`;
-  const shopName = await db.getSetting('shop_name');
+function extractItemsLocally(userMessage) {
+  const words = userMessage.split(/\s+/);
+  const items = [];
+  let qty = 1;
 
-  return `
-========================
-  ${shopName}
-========================
+  for (const word of words) {
+    // 检查数字（1-9）
+    if (/^\d+$/.test(word) && parseInt(word) <= 9) {
+      qty = parseInt(word);
+      continue;
+    }
 
-时间: ${timeStr}
+    const item = matchMenuItem(word);
+    if (item) {
+      items.push({
+        id: item.id,
+        name: item.name,
+        name_cn: item.name_cn,
+        qty: qty,
+        price: item.price
+      });
+      qty = 1; // 重置数量
+    }
+  }
 
-客户请求: ${userMessage}
-
-由于系统暂时故障，
-可能需要人工确认您的订单。
-
-订单号: ${orderId}
-
-感谢您的耐心！
-========================`;
+  return {
+    success: items.length > 0,
+    status: items.length > 0 ? 'ok' : 'not_found',
+    items: items,
+    message: items.length > 0 ? 'かしこまりました' : '申し訳ございません。メニューをご確認ください。',
+    fallback: true
+  };
 }
 
 module.exports = {
-  generateReceipt,
-  generateFallbackReceipt,
+  extractItemsFromMessage,
+  extractItemsLocally,
+  matchMenuItem,
   getSystemPrompt
 };
