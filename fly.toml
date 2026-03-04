@@ -1,0 +1,39 @@
+# fly.toml app configuration file generated for cyber-bento
+app = "cyber-bento"
+primary_region = "hkg"
+
+[env]
+  PORT = "3000"
+
+[build]
+  builder = "paketobuildpacks"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[checks]
+  [checks.alive]
+    type = "http"
+    interval = "10s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/callback"
+    expect_status = 405  # 预期 POST 方法，所以 GET 返回 405
